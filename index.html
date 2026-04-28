@@ -45,37 +45,43 @@
   .prog-bar { width:100%; height:2px; background:var(--border); border-radius:1px; overflow:hidden; margin-bottom:8px; }
   .prog-fill { height:100%; width:0%; background:var(--green); border-radius:1px; transition:width 0.35s; }
 
-  /* GROUP + ASSET ROWS */
+  /* ASSET CARDS — 11-column grid matching progress bar width */
   .grp-lbl { display:none; }
 
-  .asset-rows { display:flex; flex-wrap:wrap; gap:4px; }
-  .arow {
-    display:inline-flex; align-items:center; gap:6px;
-    padding:4px 8px;
-    background:var(--bg2); border:1px solid var(--border); border-left:3px solid var(--border);
-    border-radius:4px; font-family:var(--mono); font-size:11px;
-    transition:border-color 0.18s; white-space:nowrap;
+  .asset-rows {
+    display:grid;
+    grid-template-columns: repeat(11, 1fr);
+    gap:4px;
   }
-  .arow.ok      { border-left-color:var(--green); }
-  .arow.fail    { border-left-color:var(--red); }
-  .arow.fetching{ border-left-color:var(--yellow); }
+  .arow {
+    display:flex; flex-direction:column; align-items:flex-start;
+    gap:3px; padding:8px 8px 6px;
+    background:var(--bg2); border:1px solid var(--border); border-top:3px solid var(--border);
+    border-radius:4px; font-family:var(--mono);
+    transition:border-color 0.18s; overflow:hidden;
+  }
+  .arow.ok      { border-top-color:var(--green); }
+  .arow.fail    { border-top-color:var(--red); }
+  .arow.fetching{ border-top-color:var(--yellow); }
 
-  .rdot { width:6px; height:6px; border-radius:50%; background:var(--text3); flex-shrink:0; }
-  .rdot.ok       { background:var(--green); }
-  .rdot.fail     { background:var(--red); }
-  .rdot.fetching { background:var(--yellow); animation:pulse 0.8s infinite; }
+  .rdot { display:none; }
 
-  .rname   { color:var(--text); font-size:11px; }
+  .rname {
+    color:var(--text); font-size:11px; font-weight:500;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:100%;
+  }
   .rticker { color:var(--text3); font-size:10px; }
-  .rsta    { font-size:10px; color:var(--text3); }
+  .rsta    { font-size:10px; color:var(--text3); min-height:13px; }
   .rsta.ok       { color:var(--green); }
   .rsta.fail     { color:var(--red); }
   .rsta.fetching { color:var(--yellow); }
 
   .rfbtn {
-    padding:1px 6px; font-size:10px; font-family:var(--mono);
+    margin-top:2px;
+    padding:2px 8px; font-size:10px; font-family:var(--mono);
     border:1px solid var(--border2); background:transparent; color:var(--text3);
-    border-radius:3px; cursor:pointer; transition:all 0.12s; white-space:nowrap; flex-shrink:0;
+    border-radius:3px; cursor:pointer; transition:all 0.12s; white-space:nowrap;
+    align-self:stretch; text-align:center;
   }
   .rfbtn:hover:not(:disabled) { border-color:var(--green); color:var(--green); }
   .rfbtn:disabled { opacity:0.3; cursor:not-allowed; }
@@ -270,7 +276,8 @@ function buildDataPanel() {
       row.innerHTML =
         `<span class="rdot" id="dot-${asset.key}"></span>` +
         `<span class="rname" style="color:${asset.color}">${asset.label}</span>` +
-        `<span class="rticker">${asset.ticker} · ${fromNote}</span>` +
+        `<span class="rticker">${asset.ticker}</span>` +
+        `<span class="rticker">from ${fromNote}</span>` +
         `<span class="rsta" id="sta-${asset.key}">—</span>` +
         `<button class="rfbtn" onclick="fetchOne('${asset.key}')">Fetch</button>`;
       container.appendChild(row);
