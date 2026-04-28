@@ -45,35 +45,34 @@
   .prog-fill { height:100%; width:0%; background:var(--green); border-radius:1px; transition:width 0.35s; }
 
   /* GROUP + ASSET ROWS */
-  .grp-lbl { font-family:var(--mono); font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:0.7px; padding:8px 2px 3px; display:block; grid-column:1/-1; }
-  .grp-lbl:first-child { padding-top:0; }
+  .grp-lbl { display:none; }
 
-  .asset-rows { display:flex; flex-direction:column; gap:2px; }
+  .asset-rows { display:flex; flex-wrap:wrap; gap:4px; }
   .arow {
-    display:flex; align-items:center; gap:8px;
-    padding:4px 10px;
+    display:inline-flex; align-items:center; gap:6px;
+    padding:4px 8px;
     background:var(--bg2); border:1px solid var(--border); border-left:3px solid var(--border);
     border-radius:4px; font-family:var(--mono); font-size:11px;
-    transition:border-color 0.18s; white-space:nowrap; overflow:hidden;
+    transition:border-color 0.18s; white-space:nowrap;
   }
   .arow.ok      { border-left-color:var(--green); }
   .arow.fail    { border-left-color:var(--red); }
   .arow.fetching{ border-left-color:var(--yellow); }
 
-  .rdot { width:7px; height:7px; border-radius:50%; background:var(--text3); flex-shrink:0; }
+  .rdot { width:6px; height:6px; border-radius:50%; background:var(--text3); flex-shrink:0; }
   .rdot.ok       { background:var(--green); }
   .rdot.fail     { background:var(--red); }
   .rdot.fetching { background:var(--yellow); animation:pulse 0.8s infinite; }
 
-  .rname   { color:var(--text); font-size:11px; min-width:110px; }
-  .rticker { color:var(--text3); font-size:10px; min-width:90px; }
-  .rsta    { font-size:10px; color:var(--text3); margin-left:auto; padding-right:10px; }
+  .rname   { color:var(--text); font-size:11px; }
+  .rticker { color:var(--text3); font-size:10px; }
+  .rsta    { font-size:10px; color:var(--text3); }
   .rsta.ok       { color:var(--green); }
   .rsta.fail     { color:var(--red); }
   .rsta.fetching { color:var(--yellow); }
 
   .rfbtn {
-    padding:2px 8px; font-size:10px; font-family:var(--mono);
+    padding:1px 6px; font-size:10px; font-family:var(--mono);
     border:1px solid var(--border2); background:transparent; color:var(--text3);
     border-radius:3px; cursor:pointer; transition:all 0.12s; white-space:nowrap; flex-shrink:0;
   }
@@ -158,13 +157,13 @@
     <div class="bgrp" id="viewTabs">
       <button class="cbtn vtab active" data-view="growth">Growth of $1</button>
       <button class="cbtn vtab" data-view="rolling">Rolling Return</button>
-      <button class="cbtn vtab" data-view="volatility">Rolling Vol</button>
+      <button class="cbtn vtab" data-view="volatility">Rolling Volatility</button>
       <button class="cbtn vtab" data-view="drawdown">Drawdown</button>
       <button class="cbtn vtab" data-view="scatter">Risk vs Return</button>
     </div>
   </div>
   <div class="cg">
-    <span class="clbl">Period</span>
+    <span class="clbl">Trailing period</span>
     <div class="bgrp" id="periodBtns">
       <button class="cbtn" data-period="5">5Y</button>
       <button class="cbtn active" data-period="10">10Y</button>
@@ -180,7 +179,7 @@
   <div class="chart-area">
     <div class="chart-ttl" id="chartTtl">—</div>
     <div class="legend" id="legendEl"></div>
-    <div style="position:relative;height:440px;"><canvas id="mc"></canvas></div>
+    <div style="position:relative;height:500px;"><canvas id="mc"></canvas></div>
     <div class="note" id="chartNote"></div>
   </div>
 </div>
@@ -572,7 +571,7 @@ function render() {
   buildLegend(vis);
   const datasets = vis.map(a => {
     const data = activeView==='growth'?sGrowth(a.key,py):activeView==='rolling'?sRolling(a.key,py):activeView==='volatility'?sVol(a.key,py):sDrawdown(a.key,py);
-    return { label:a.label, data, borderColor:a.color, backgroundColor:'transparent', borderWidth:1.5, borderDash:a.dash||[], pointRadius:0, pointHoverRadius:3, tension:0.2, parsing:false };
+    return { label:a.label, data, borderColor:a.color, backgroundColor:'transparent', borderWidth:1.8, borderDash:a.dash||[], pointRadius:0, pointHoverRadius:3, tension:0, parsing:false };
   });
 
   chartInst = new Chart(ctx, {
@@ -585,8 +584,28 @@ function render() {
         tooltip:{...TTip,callbacks:{label:c=>{const v=c.parsed.y;return activeView==='growth'?` ${c.dataset.label}: ${v.toFixed(2)}x`:` ${c.dataset.label}: ${v>0?'+':''}${v.toFixed(1)}%`;}}}
       },
       scales:{
-        x:{type:'category',ticks:{color:'#555a65',font:{size:10,family:'DM Mono'},maxTicksLimit:12,maxRotation:0},grid:{color:'rgba(255,255,255,0.04)'}},
-        y:{type:activeView==='growth'?'logarithmic':'linear',grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#555a65',font:{size:10,family:'DM Mono'},callback:v=>activeView==='growth'?v+'x':v+'%'}}
+        x:{
+          type:'category',
+          grid:{color:'rgba(255,255,255,0.04)'},
+          ticks:{
+            color:'#555a65',
+            font:{size:10,family:'DM Mono'},
+            maxRotation:0,
+            autoSkip:false,
+            callback: function(val, idx) {
+              const lbl = this.getLabelForValue(val);
+              // Show only January of each year (YYYY-01), skip others
+              if (!lbl) return '';
+              const [yr, mo] = lbl.split('-');
+              return mo === '01' ? yr : '';
+            }
+          }
+        },
+        y:{
+          type:activeView==='growth'?'logarithmic':'linear',
+          grid:{color:'rgba(255,255,255,0.04)'},
+          ticks:{color:'#555a65',font:{size:10,family:'DM Mono'},callback:v=>activeView==='growth'?v+'x':v+'%'}
+        }
       }
     }
   });

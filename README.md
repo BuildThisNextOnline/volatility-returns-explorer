@@ -8,7 +8,7 @@ An interactive tool for exploring how volatility and returns relate across diffe
 
 ## What it shows
 
-13 assets across equities, bonds, commodities, and crypto — all on weekly data pulled live from Yahoo Finance:
+11 assets across equities, bonds, commodities, and crypto — all on weekly data pulled live from Yahoo Finance:
 
 | Asset | Ticker | Data from |
 |---|---|---|
