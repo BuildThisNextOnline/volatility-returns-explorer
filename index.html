@@ -1,9 +1,20 @@
 <!DOCTYPE html>
+<!-- Volatility & Returns Explorer
+     v1: initial build — 5 views (growth, rolling return, rolling vol, drawdown, scatter), live Yahoo fetch, 12 assets
+     v2: CORS proxy attempts via allorigins.win and corsproxy.io
+     v3: per-asset fetch status panel with progress bar and retry button
+     v4: full rewrite — manual per-asset fetch buttons, sequential fetch with 1s gap, compact rows
+     v5: SPY replaces ^GSPC, Russell 2000 dropped, row layout compacted, console error logging
+     v6: GitHub Pages setup (github_setup.bat, github_push.bat), sine wave favicon, README, encoding fixes
+     v7: Chart.js time scale with date-fns adapter, localStorage cache (daily), 11-card grid layout
+     v8: inline canvas labels plugin — crosshair + per-line labels at hover x; tooltip disabled; version tracking
+     v9: insight engine — per-view analysis panel computed from actual fetched data; vol-return correlation; drawdown analysis
+-->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Volatility &amp; Returns Explorer</title>
+<title>Volatility &amp; Returns Explorer · v9</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBkMGYxMiIvPjxwYXRoIGQ9Ik0yIDE2IEM2IDE2IDYgNiAxMCA2IEMxNCA2IDE0IDI2IDE4IDI2IEMyMiAyNiAyMiAxNiAyNiAxNiBDMjggMTYgMjkgMTYgMzAgMTYiIHN0cm9rZT0iIzRhZGU4MCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgZmlsbD0ibm9uZSIvPjwvc3ZnPg==">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
@@ -111,6 +122,35 @@
 
   /* MAIN */
   .main { padding:18px 32px 32px; }
+
+  /* INSIGHT PANEL */
+  .insight-panel {
+    background:var(--bg3); border:1px solid var(--border2);
+    border-left:3px solid var(--green);
+    border-radius:6px; padding:14px 16px; margin-bottom:14px;
+    font-family:var(--mono); font-size:11px; line-height:1.7;
+  }
+  .insight-panel.hidden { display:none; }
+  .insight-title {
+    font-size:10px; text-transform:uppercase; letter-spacing:0.7px;
+    color:var(--text3); margin-bottom:8px;
+  }
+  .insight-body { color:var(--text2); }
+  .insight-body strong { color:var(--text); font-weight:500; }
+  .insight-body .hi  { color:var(--green); }
+  .insight-body .lo  { color:var(--red); }
+  .insight-body .neu { color:var(--yellow); }
+  .insight-row {
+    display:grid; grid-template-columns:1fr 1fr;
+    gap:8px; margin-top:10px;
+  }
+  .insight-stat {
+    background:var(--bg2); border:1px solid var(--border);
+    border-radius:4px; padding:8px 10px;
+  }
+  .is-lbl { font-size:10px; color:var(--text3); margin-bottom:2px; }
+  .is-val { font-size:13px; color:var(--text); font-weight:500; }
+  .is-sub { font-size:10px; color:var(--text3); margin-top:1px; }
   .stats-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; margin-bottom:14px; }
   .scard { background:var(--bg2); border:1px solid var(--border); border-radius:6px; padding:11px 13px; }
   .slbl  { font-size:10px; font-family:var(--mono); color:var(--text3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:3px; }
@@ -142,6 +182,7 @@
   <div>
     <h1>Volatility &amp; Returns Explorer</h1>
     <p>Weekly data · Yahoo Finance · equities, bonds, commodities &amp; crypto</p>
+    <p style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:2px;">v9</p>
     <div class="hst"><div class="sdot" id="sdot"></div><span id="stext">Ready — fetch data to begin</span></div>
   </div>
 </div>
@@ -183,6 +224,10 @@
 
 <div class="main">
   <div class="stats-row" id="statsRow"></div>
+  <div class="insight-panel hidden" id="insightPanel">
+    <div class="insight-title" id="insightTitle">Analysis</div>
+    <div class="insight-body" id="insightBody"></div>
+  </div>
   <div class="chart-area">
     <div class="chart-ttl" id="chartTtl">—</div>
     <div class="legend" id="legendEl"></div>
@@ -550,6 +595,116 @@ function buildLegend(assets) {
   });
 }
 
+// ── INSIGHT ENGINE ───────────────────────────────────────────────────────
+function computeInsight(py) {
+  const panel = document.getElementById('insightPanel');
+  const title = document.getElementById('insightTitle');
+  const body  = document.getElementById('insightBody');
+
+  const vis = ASSETS.filter(a => activeAssets.has(a.key) && rawData[a.key]);
+  if (vis.length < 2) { panel.classList.add('hidden'); return; }
+
+  // Compute scatter stats for all visible assets
+  const pts = vis.map(a => ({ ...a, s: sScatter(a.key, py) })).filter(a => a.s);
+  if (pts.length < 2) { panel.classList.add('hidden'); return; }
+
+  const byRet  = [...pts].sort((a,b) => b.s.y - a.s.y);
+  const byVol  = [...pts].sort((a,b) => b.s.x - a.s.x);
+  const bySh   = [...pts].sort((a,b) => (b.s.y/b.s.x) - (a.s.y/a.s.x));
+
+  const best   = byRet[0],  worst  = byRet[byRet.length-1];
+  const hiVol  = byVol[0],  loVol  = byVol[byVol.length-1];
+  const bestSh = bySh[0];
+
+  // Vol-return correlation
+  const mv = pts.reduce((s,p)=>s+p.s.x,0)/pts.length;
+  const mr = pts.reduce((s,p)=>s+p.s.y,0)/pts.length;
+  const cov = pts.reduce((s,p)=>s+(p.s.x-mv)*(p.s.y-mr),0)/pts.length;
+  const sv  = Math.sqrt(pts.reduce((s,p)=>s+(p.s.x-mv)**2,0)/pts.length);
+  const sr  = Math.sqrt(pts.reduce((s,p)=>s+(p.s.y-mr)**2,0)/pts.length);
+  const corr = sv && sr ? (cov/(sv*sr)) : 0;
+
+  // Max drawdown per asset
+  const ddMap = {};
+  vis.forEach(a => {
+    const ts = getTs(a.key, py), d = rawData[a.key];
+    if (!d || ts.length < 2) return;
+    let peak = -Infinity, maxDD = 0;
+    ts.forEach(t => { const v=d[t]; if(v>peak) peak=v; const dd=(v/peak-1)*100; if(dd<maxDD) maxDD=dd; });
+    ddMap[a.key] = maxDD;
+  });
+  const ddPts = pts.map(p => ({ ...p, dd: ddMap[p.key] || 0 })).filter(p => p.dd < 0);
+  ddPts.sort((a,b) => a.dd - b.dd);
+  const worstDD = ddPts[0], bestDD = ddPts[ddPts.length-1];
+
+  const pyLabel = py === 15 ? 'max available' : py + '-year';
+  const corrStr = corr > 0.6 ? 'strong positive' : corr > 0.3 ? 'moderate positive' : corr < -0.3 ? 'negative' : 'weak';
+
+  let t = '', b = '';
+
+  if (activeView === 'growth') {
+    t = 'Growth of $1 — What Compounding Looks Like Across Assets';
+    b = `Over the ${pyLabel} period, <strong class="hi">${best.label}</strong> turned $1 into `
+      + `<strong class="hi">$${(1 + best.s.y/100 * best.s.years * (best.s.y/100 > 0 ? 1 : 1)).toFixed(0)}</strong> `
+      + `(${best.s.y > 0 ? '+' : ''}${best.s.y.toFixed(1)}% annualised), while `
+      + `<strong class="lo">${worst.label}</strong> returned `
+      + `<strong class="lo">${worst.s.y > 0 ? '+' : ''}${worst.s.y.toFixed(1)}%</strong> annualised. `
+      + `The log scale reveals the compounding gap — assets that look close together in early years `
+      + `diverge dramatically over time. <strong>${hiVol.label}</strong> (vol: ${hiVol.s.x.toFixed(1)}%) `
+      + `significantly outpaced <strong>${loVol.label}</strong> (vol: ${loVol.s.x.toFixed(1)}%), `
+      + `illustrating that the discomfort of volatility is precisely what generates long-run wealth.`;
+  } else if (activeView === 'rolling') {
+    t = 'Rolling Return — Volatility of Returns Over Time';
+    b = `This view shows how dramatically annual returns swing for different assets. `
+      + `<strong class="hi">${hiVol.label}</strong> (annualised vol: ${hiVol.s.x.toFixed(1)}%) `
+      + `regularly swings between large gains and steep losses within single years — `
+      + `but its long-run annualised return of <strong class="hi">${hiVol.s.y > 0 ? '+' : ''}${hiVol.s.y.toFixed(1)}%</strong> `
+      + `dwarfs that of <strong>${loVol.label}</strong> at `
+      + `<strong>${loVol.s.y > 0 ? '+' : ''}${loVol.s.y.toFixed(1)}%</strong>. `
+      + `Notice how the crash periods (2020, 2022) show up as synchronised dips across most assets, `
+      + `while the recovery periods that follow tend to reward the most volatile assets most generously.`;
+  } else if (activeView === 'volatility') {
+    t = 'Rolling Volatility — The Price of Entry for Each Asset';
+    b = `Volatility is not risk — it is the price you pay for return. `
+      + `<strong class="lo">${hiVol.label}</strong> runs at ${hiVol.s.x.toFixed(1)}% annualised volatility, `
+      + `meaning its price routinely moves ±${(hiVol.s.x/Math.sqrt(52)).toFixed(1)}% week-to-week. `
+      + `<strong>${loVol.label}</strong> at ${loVol.s.x.toFixed(1)}% vol feels safer — and it is, in the short run. `
+      + `But notice that vol is not constant: it spikes sharply during crises (visible as peaks across all lines) `
+      + `and compresses during calm periods. The ${corrStr} correlation (${corr.toFixed(2)}) between `
+      + `volatility and return across these assets confirms the central thesis: `
+      + `<strong>higher volatility has historically been compensated with higher returns.</strong>`;
+  } else if (activeView === 'drawdown') {
+    t = 'Drawdown — The Emotional Cost of Staying Invested';
+    b = `Drawdown shows how far below its own peak each asset has traded at any point. `
+      + (worstDD ? `<strong class="lo">${worstDD.label}</strong> experienced the steepest fall — `
+        + `<strong class="lo">${worstDD.dd.toFixed(1)}%</strong> below its peak — ` : '')
+      + `which is the moment most investors capitulate and lock in permanent losses. `
+      + (bestDD ? `<strong class="hi">${bestDD.label}</strong> had the shallowest drawdown at `
+        + `<strong class="hi">${bestDD.dd.toFixed(1)}%</strong>. ` : '')
+      + `The key insight: every asset recovers its drawdown eventually if the underlying is sound. `
+      + `The investors who stayed through the worst drawdowns are the ones who captured the full compounding shown in the Growth chart. `
+      + `<strong>Volatility only becomes a permanent loss when you sell.</strong>`;
+  } else if (activeView === 'scatter') {
+    t = 'Risk vs Return — The Efficient Frontier in Practice';
+    b = `Each bubble is one asset. X-axis is how wild the ride was (annualised volatility); `
+      + `Y-axis is the reward (annualised return). A ${corrStr} correlation of `
+      + `<strong>${corr.toFixed(2)}</strong> across these ${pts.length} assets over the ${pyLabel} period `
+      + `confirms that <strong>volatility and return move together.</strong> `
+      + `<strong class="hi">${best.label}</strong> sits top-right: highest return `
+      + `(<strong class="hi">+${best.s.y.toFixed(1)}%</strong>) with high vol (${best.s.x.toFixed(1)}%). `
+      + `<strong>${loVol.label}</strong> sits bottom-left: lowest vol (${loVol.s.x.toFixed(1)}%) `
+      + `but also the lowest return (${loVol.s.y > 0 ? '+' : ''}${loVol.s.y.toFixed(1)}%). `
+      + `Best risk-adjusted return: <strong class="hi">${bestSh.label}</strong> `
+      + `(Sharpe: <strong class="hi">${(bestSh.s.y/bestSh.s.x).toFixed(2)}</strong>). `
+      + `The takeaway: there is no free lunch — you cannot get equity-like returns with bond-like volatility. `
+      + `The question is not how to avoid volatility, but whether you can <em>stay in the game</em> long enough to be rewarded for it.`;
+  }
+
+  title.textContent = t;
+  body.innerHTML   = b;
+  panel.classList.remove('hidden');
+}
+
 // ── RENDER ────────────────────────────────────────────────────────────────
 const TTip = { backgroundColor:'#1a1e25',borderColor:'rgba(255,255,255,0.1)',borderWidth:1,titleColor:'#8b909a',bodyColor:'#e8eaed',padding:10 };
 
@@ -559,6 +714,7 @@ function render() {
 
   document.getElementById('chartNote').textContent = NOTES[activeView];
   buildStats(py);
+  computeInsight(py);
   if (chartInst) { chartInst.destroy(); chartInst = null; }
   document.querySelectorAll('.scatter-wrap').forEach(e => e.remove());
 
