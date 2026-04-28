@@ -9,7 +9,7 @@
      v7: Chart.js time scale with date-fns adapter, localStorage cache (daily), 11-card grid layout
      v8: inline canvas labels plugin — crosshair + per-line labels at hover x; tooltip disabled; version tracking
      v9: insight engine — per-view analysis panel computed from actual fetched data; vol-return correlation; drawdown analysis
-     v10: tab reorder (Rolling Return→Vol→Scatter→Drawdown→What $1000 Became); rewritten insight text with line breaks;
+     v10: tab reorder (Rolling Return→Volatility→Scatter→Drawdown→What $1000 Became); rewritten insight text with line breaks;
            per-asset internal vol-return correlation table; event markers (COVID/Crypto Winter/Rate Hikes);
            $1,000 base instead of $1; fixed growth calculation; Sharpe defined inline
 -->
@@ -154,11 +154,11 @@
   .is-lbl { font-size:10px; color:var(--text3); margin-bottom:2px; }
   .is-val { font-size:13px; color:var(--text); font-weight:500; }
   .is-sub { font-size:10px; color:var(--text3); margin-top:1px; }
-  .stats-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; margin-bottom:14px; }
-  .scard { background:var(--bg2); border:1px solid var(--border); border-radius:6px; padding:11px 13px; }
-  .slbl  { font-size:10px; font-family:var(--mono); color:var(--text3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:3px; }
-  .sval  { font-size:14px; font-weight:500; font-family:var(--mono); }
-  .ssub  { font-size:10px; color:var(--text3); margin-top:2px; }
+  .stats-row { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:14px; }
+  .scard { background:var(--bg2); border:1px solid var(--border); border-radius:6px; padding:16px 18px; }
+  .slbl  { font-size:10px; font-family:var(--mono); color:var(--text3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; }
+  .sval  { font-size:22px; font-weight:500; font-family:var(--mono); margin-bottom:4px; }
+  .ssub  { font-size:13px; color:var(--text3); margin-top:2px; font-family:var(--mono); }
   .pos { color:var(--green); } .neg { color:var(--red); } .neu { color:var(--text2); }
 
   .chart-area { background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:18px; }
@@ -572,9 +572,9 @@ function buildStats(py) {
   const sh=pts.reduce((a,b)=>(b.y/b.x)>(a.y/a.x)?b:a);
   const hv=pts.reduce((a,b)=>b.x>a.x?b:a);
   [{lbl:'Best return',val:best.label,sub:(best.y>0?'+':'')+best.y.toFixed(1)+'% ann.',cls:'pos'},
-   {lbl:'Lowest vol',val:lv.label,sub:lv.x.toFixed(1)+'% ann. vol',cls:'neu'},
+   {lbl:'Lowest volatility',val:lv.label,sub:lv.x.toFixed(1)+'% ann. volatility',cls:'neu'},
    {lbl:'Best risk-adj.',val:sh.label,sub:'Sharpe '+(sh.y/sh.x).toFixed(2),cls:'pos'},
-   {lbl:'Highest vol',val:hv.label,sub:hv.x.toFixed(1)+'% ann. vol',cls:'neg'},
+   {lbl:'Highest volatility',val:hv.label,sub:hv.x.toFixed(1)+'% ann. volatility',cls:'neg'},
   ].forEach(c=>{
     const el=document.createElement('div'); el.className='scard';
     el.innerHTML=`<div class="slbl">${c.lbl}</div><div class="sval ${c.cls}">${c.val}</div><div class="ssub">${c.sub}</div>`;
@@ -687,10 +687,16 @@ function computeInsight(py) {
     const hiWeekly = (hiVol.s.x / Math.sqrt(52)).toFixed(1);
     const loWeekly = (loVol.s.x / Math.sqrt(52)).toFixed(1);
     const top3names = top3.map(p=>`<strong style="color:${p.color}">${p.label}</strong> (${p.corr.toFixed(2)})`).join(', ');
-    const corrTable = perAssetCorr.map(p =>
-      `<tr><td><span class="csw" style="background:${p.color}"></span>${p.label}</td>`
-      + `<td style="text-align:right;color:${p.corr>0.3?'var(--green)':p.corr<0?'var(--red)':'var(--text2)'}">${p.corr.toFixed(2)}</td></tr>`
-    ).join('');
+    // Sorted descending, rendered as inline tags
+    const corrTags = perAssetCorr.map(p => {
+      const col = p.corr > 0.3 ? 'var(--green)' : p.corr < 0 ? 'var(--red)' : 'var(--text2)';
+      return `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;`
+        + `margin:2px;background:var(--bg2);border:1px solid var(--border);border-radius:3px;`
+        + `font-family:var(--mono);font-size:11px;white-space:nowrap;">`
+        + `<span class="csw" style="background:${p.color}"></span>`
+        + `<span style="color:var(--text2)">${p.label}</span>`
+        + `<span style="color:${col};font-weight:500">${p.corr.toFixed(2)}</span></span>`;
+    }).join('');
 
     t = 'Rolling Volatility — The Price of Entry';
     b = `<strong>Volatility is not risk — it is the price of return.</strong>`
@@ -705,7 +711,7 @@ function computeInsight(py) {
       + `In finance, 0.3 is considered meaningful. At ${corr.toFixed(2)}, volatility explains roughly half the variation in returns — this is not a theory, it is what the data shows.`
       + br
       + `The assets where volatile periods most reliably led to higher returns: ${top3names}.`
-      + `<br><br><table class="stable"><thead><tr><th>Asset</th><th style="text-align:right">Internal Vol-Return Correlation</th></tr></thead><tbody>${corrTable}</tbody></table>`;
+      + `<br><br><div style="display:flex;flex-wrap:wrap;gap:2px;margin-top:4px;">${corrTags}</div>`;
 
   } else if (activeView === 'scatter') {
     const spSharpe = sp500 ? (sp500.s.y/sp500.s.x).toFixed(2) : '—';
@@ -806,23 +812,33 @@ function render() {
       }))},
       options:{
         responsive:true, maintainAspectRatio:false,
-        plugins:{ legend:{display:false}, tooltip:{...TTip,callbacks:{label:c=>`${c.dataset.label}: Vol ${c.raw.x.toFixed(1)}%  Ret ${c.raw.y.toFixed(1)}%`}} },
+        plugins:{ legend:{display:false}, tooltip:{...TTip,callbacks:{label:c=>`${c.dataset.label}: Volatility ${c.raw.x.toFixed(1)}%  Return ${c.raw.y.toFixed(1)}%`}} },
         scales:{
-          x:{title:{display:true,text:'Annualised Volatility (%)',color:'#555a65',font:{size:11,family:'DM Mono'}},grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#555a65',font:{size:10,family:'DM Mono'}}},
-          y:{title:{display:true,text:'Annualised Return (%)',color:'#555a65',font:{size:11,family:'DM Mono'}},grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#555a65',font:{size:10,family:'DM Mono'},callback:v=>v+'%'}}
+          x:{title:{display:true,text:'Annualised Volatility (%)',color:'#8b909a',font:{size:12,family:'DM Mono'}},grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#8b909a',font:{size:12,family:'DM Mono'}}},
+          y:{title:{display:true,text:'Annualised Return (%)',color:'#8b909a',font:{size:12,family:'DM Mono'}},grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#8b909a',font:{size:12,family:'DM Mono'},callback:v=>v+'%'}}
         }
       }
     });
+    // Sort assets by Sharpe descending for column order
+    const sortedPts = [...pts].sort((a,b) => (b.pt.y/b.pt.x) - (a.pt.y/a.pt.x));
+    const assetCols = sortedPts.map(a =>
+      `<th style="text-align:right"><span class="csw" style="background:${a.color}"></span>${a.label}</th>`
+    ).join('');
+    const metricRows = [
+      { metric:'Sharpe Ratio',     fn: a => (a.pt.y/a.pt.x).toFixed(2),                      cls: a => a.pt.y/a.pt.x>0?'pos':'neg' },
+      { metric:'Ann. Return',      fn: a => (a.pt.y>0?'+':'')+a.pt.y.toFixed(1)+'%',          cls: a => a.pt.y>0?'pos':'neg' },
+      { metric:'Ann. Volatility',  fn: a => a.pt.x.toFixed(1)+'%',                            cls: ()=>'' },
+      { metric:'Time Period',      fn: a => a.pt.years.toFixed(1)+'y',                        cls: ()=>'' },
+    ].map(r =>
+      `<tr><td style="color:var(--text3);white-space:nowrap;padding-right:16px">${r.metric}</td>`
+      + sortedPts.map(a=>`<td style="text-align:right" class="${r.cls(a)}">${r.fn(a)}</td>`).join('')
+      + `</tr>`
+    ).join('');
     const wrap=document.createElement('div'); wrap.className='scatter-wrap';
-    wrap.innerHTML=`<table class="stable">
-      <thead><tr><th>Asset</th><th>Ann. Vol</th><th>Ann. Return</th><th>Sharpe</th><th>Data</th></tr></thead>
-      <tbody>${pts.sort((a,b)=>b.pt.y-a.pt.y).map(a=>`
-        <tr><td><span class="csw" style="background:${a.color}"></span>${a.label}</td>
-        <td>${a.pt.x.toFixed(1)}%</td>
-        <td class="${a.pt.y>0?'pos':'neg'}">${a.pt.y>0?'+':''}${a.pt.y.toFixed(1)}%</td>
-        <td>${(a.pt.y/a.pt.x).toFixed(2)}</td>
-        <td>${a.pt.years.toFixed(1)}y</td></tr>`).join('')}
-      </tbody></table>`;
+    wrap.style.overflowX='auto';
+    wrap.innerHTML=`<table class="stable" style="min-width:600px">
+      <thead><tr><th>Metric</th>${assetCols}</tr></thead>
+      <tbody>${metricRows}</tbody></table>`;
     document.querySelector('.chart-area').appendChild(wrap);
     return;
   }
@@ -976,12 +992,12 @@ function render() {
           type:'time',
           time:{ unit:'year', displayFormats:{ year:'yyyy' } },
           grid:{color:'rgba(255,255,255,0.04)'},
-          ticks:{ color:'#555a65', font:{size:10,family:'DM Mono'}, maxRotation:0, maxTicksLimit:16 }
+          ticks:{ color:'#8b909a', font:{size:12,family:'DM Mono'}, maxRotation:0, maxTicksLimit:12 }
         },
         y:{
           type:activeView==='growth'?'logarithmic':'linear',
           grid:{color:'rgba(255,255,255,0.04)'},
-          ticks:{color:'#555a65',font:{size:10,family:'DM Mono'},callback:v=>activeView==='growth'?'$'+v.toLocaleString():v+'%'}
+          ticks:{color:'#8b909a',font:{size:12,family:'DM Mono'},callback:v=>activeView==='growth'?'$'+v.toLocaleString():v+'%'}
         }
       }
     }
