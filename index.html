@@ -224,6 +224,34 @@ let activeAssets = new Set(ASSETS.map(a => a.key));
 let chartInst    = null;
 let fetchingAll  = false;
 
+// ── LOCALSTORAGE CACHE ────────────────────────────────────────────────────
+const CACHE_KEY  = 'vre_data_v1';
+const CACHE_DATE = 'vre_date_v1';
+
+function saveCache() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    localStorage.setItem(CACHE_KEY, JSON.stringify(rawData));
+    localStorage.setItem(CACHE_DATE, today);
+  } catch(e) {}
+}
+
+function loadCache() {
+  try {
+    const today    = new Date().toISOString().slice(0, 10);
+    const cachedOn = localStorage.getItem(CACHE_DATE);
+    if (cachedOn !== today) return false;
+    const stored = localStorage.getItem(CACHE_KEY);
+    if (!stored) return false;
+    rawData = JSON.parse(stored);
+    return true;
+  } catch(e) { return false; }
+}
+
+function clearCache() {
+  try { localStorage.removeItem(CACHE_KEY); localStorage.removeItem(CACHE_DATE); } catch(e) {}
+}
+
 // ── HELPERS ───────────────────────────────────────────────────────────────
 function setStatus(t, live=false) {
   document.getElementById('stext').textContent = t;
@@ -349,6 +377,7 @@ async function fetchOne(key) {
     const pts = Object.keys(data).length;
     setRowState(key, 'ok', pts + ' weeks');
     if (key === 'NIFTY' || key === 'USDINR') computeNiftyUSD();
+    saveCache();
   } else {
     setRowState(key, 'fail', 'failed');
   }
@@ -379,6 +408,7 @@ async function fetchAll() {
 // ── CLEAR ALL ─────────────────────────────────────────────────────────────
 function clearAll() {
   rawData = {};
+  clearCache();
   [...ASSETS.filter(a=>!a.usdAdj).map(a=>a.key), 'USDINR'].forEach(k => setRowState(k, '', '—'));
   document.getElementById('progFill').style.width = '0%';
   setStatus('Cleared');
@@ -579,36 +609,127 @@ function render() {
   buildLegend(vis);
   const datasets = vis.map(a => {
     const data = activeView==='growth'?sGrowth(a.key,py):activeView==='rolling'?sRolling(a.key,py):activeView==='volatility'?sVol(a.key,py):sDrawdown(a.key,py);
-    return { label:a.label, data, borderColor:a.color, backgroundColor:'transparent', borderWidth:1.8, borderDash:a.dash||[], pointRadius:0, pointHoverRadius:3, tension:0 };
+    return { label:a.label, data, borderColor:a.color, backgroundColor:rgba(a.color,0.1), borderWidth:1.8, borderDash:a.dash||[], pointRadius:0, pointHoverRadius:5, pointHoverBackgroundColor:a.color, tension:0 };
+  });
+
+  // Custom inline-labels plugin: crosshair + per-line label at hover x
+  const inlineLabels = {
+    id: 'inlineLabels',
+    afterDraw(chart, args, opts) {
+      const {ctx, chartArea:{left,right,top,bottom}, scales:{x,y}} = chart;
+      if (chart._hoverX === undefined) return;
+      const hx = chart._hoverX;
+      if (hx < left || hx > right) return;
+
+      // Draw vertical crosshair
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(hx, top);
+      ctx.lineTo(hx, bottom);
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4,3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Date label at top
+      const xVal = x.getValueForPixel(hx);
+      const d = new Date(xVal);
+      const dateStr = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+      ctx.font = '10px DM Mono, monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.textAlign = 'center';
+      ctx.fillText(dateStr, hx, top - 4);
+
+      // Collect all dataset values at this x pixel
+      const points = [];
+      chart.data.datasets.forEach((ds, di) => {
+        const meta = chart.getDatasetMeta(di);
+        if (meta.hidden) return;
+        // Find closest data point to hovered x
+        let closest = null, minDist = Infinity;
+        meta.data.forEach(pt => {
+          const dist = Math.abs(pt.x - hx);
+          if (dist < minDist) { minDist = dist; closest = pt; }
+        });
+        if (!closest || minDist > 40) return;
+        const raw = chart.data.datasets[di].data[closest.$context?.dataIndex ?? closest.index];
+        if (!raw) return;
+        const yVal = typeof raw === 'object' ? raw.y : raw;
+        if (yVal == null) return;
+        const valStr = activeView==='growth' ? yVal.toFixed(2)+'x' : (yVal>0?'+':'')+yVal.toFixed(1)+'%';
+        points.push({ yPx: closest.y, label: ds.label, val: valStr, color: ds.borderColor });
+      });
+
+      if (!points.length) { ctx.restore(); return; }
+
+      // Sort by y pixel position (top to bottom)
+      points.sort((a,b) => a.yPx - b.yPx);
+
+      // Spread labels to avoid overlap (min 14px apart)
+      const minGap = 14;
+      for (let i=1; i<points.length; i++) {
+        if (points[i].yPx - points[i-1].yPx < minGap)
+          points[i].yPx = points[i-1].yPx + minGap;
+      }
+      // Also push up from bottom
+      for (let i=points.length-2; i>=0; i--) {
+        if (points[i+1].yPx - points[i].yPx < minGap)
+          points[i].yPx = points[i+1].yPx - minGap;
+      }
+
+      // Decide which side to render labels (left or right of crosshair)
+      const labelLeft = hx > (left + right) / 2;
+
+      ctx.font = '10px DM Mono, monospace';
+      ctx.textAlign = labelLeft ? 'right' : 'left';
+      const xOff = labelLeft ? -6 : 6;
+
+      points.forEach(p => {
+        const py = Math.max(top+6, Math.min(bottom-6, p.yPx));
+        // Dot on line
+        ctx.beginPath();
+        ctx.arc(hx, py, 3, 0, Math.PI*2);
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        // Label text: "Name  +12.3%"
+        const txt = p.label + '  ' + p.val;
+        ctx.fillStyle = p.color;
+        ctx.fillText(txt, hx + xOff, py + 3);
+      });
+
+      ctx.restore();
+    }
+  };
+
+  // Track mouse position
+  const canvas = ctx.canvas;
+  canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    chartInst._hoverX = e.clientX - rect.left;
+    chartInst.draw();
+  });
+  canvas.addEventListener('mouseleave', () => {
+    chartInst._hoverX = undefined;
+    chartInst.draw();
   });
 
   chartInst = new Chart(ctx, {
     type:'line', data:{datasets},
+    plugins:[inlineLabels],
     options:{
       responsive:true, maintainAspectRatio:false,
       interaction:{mode:'index',intersect:false},
       plugins:{
         legend:{display:false},
-        tooltip:{...TTip,callbacks:{
-          title: items => {
-            if (!items.length) return '';
-            const d = new Date(items[0].parsed.x);
-            return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
-          },
-          label:c=>{const v=c.parsed.y;return activeView==='growth'?` ${c.dataset.label}: ${v.toFixed(2)}x`:` ${c.dataset.label}: ${v>0?'+':''}${v.toFixed(1)}%`;}
-        }}
+        tooltip:{ enabled:false }
       },
       scales:{
         x:{
           type:'time',
           time:{ unit:'year', displayFormats:{ year:'yyyy' } },
           grid:{color:'rgba(255,255,255,0.04)'},
-          ticks:{
-            color:'#555a65',
-            font:{size:10,family:'DM Mono'},
-            maxRotation:0,
-            maxTicksLimit:16,
-          }
+          ticks:{ color:'#555a65', font:{size:10,family:'DM Mono'}, maxRotation:0, maxTicksLimit:16 }
         },
         y:{
           type:activeView==='growth'?'logarithmic':'linear',
@@ -623,6 +744,23 @@ function render() {
 // ── INIT ──────────────────────────────────────────────────────────────────
 buildDataPanel();
 buildAbar();
+
+// Load from cache if available and fresh (today's date)
+if (loadCache()) {
+  const loaded = ASSETS.filter(a => rawData[a.key] && Object.keys(rawData[a.key]).length > 5);
+  loaded.forEach(a => {
+    const pts = Object.keys(rawData[a.key]).length;
+    setRowState(a.key, 'ok', pts + ' weeks');
+  });
+  if (rawData['USDINR'] && Object.keys(rawData['USDINR']).length > 5) {
+    setRowState('USDINR', 'ok', Object.keys(rawData['USDINR']).length + ' weeks');
+  }
+  computeNiftyUSD();
+  setStatus('Loaded from cache · ' + loaded.length + ' assets · fetched today', true);
+  refreshChart();
+} else {
+  setStatus('No cache — fetch data to begin');
+}
 
 document.getElementById('viewTabs').addEventListener('click', e => {
   const t=e.target.closest('.vtab'); if(!t) return;
