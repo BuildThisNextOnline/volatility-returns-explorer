@@ -572,7 +572,7 @@ function render() {
   buildLegend(vis);
   const datasets = vis.map(a => {
     const data = activeView==='growth'?sGrowth(a.key,py):activeView==='rolling'?sRolling(a.key,py):activeView==='volatility'?sVol(a.key,py):sDrawdown(a.key,py);
-    return { label:a.label, data, borderColor:a.color, backgroundColor:'transparent', borderWidth:1.8, borderDash:a.dash||[], pointRadius:0, pointHoverRadius:3, tension:0, parsing:false };
+    return { label:a.label, data, borderColor:a.color, backgroundColor:'transparent', borderWidth:1.8, borderDash:a.dash||[], pointRadius:0, pointHoverRadius:3, tension:0 };
   });
 
   chartInst = new Chart(ctx, {
